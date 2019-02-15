@@ -24,6 +24,8 @@ THE SOFTWARE.
 #include <string.h>
 #include <stdio.h>
 #include <sys/time.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 #include <assert.h>
 
 #ifdef __linux
@@ -479,10 +481,14 @@ parse_filter(int c, gnc_t gnc, void *closure, struct filter **filter_return)
            filter->src_plen_le < 128 || filter->src_plen_ge > 0)
             filter->af = AF_INET6;
     } else if(filter->af == AF_INET) {
-        filter->plen_le += 96;
-        filter->plen_ge += 96;
-        filter->src_plen_le += 96;
-        filter->src_plen_ge += 96;
+        if(filter->plen_le < 128)
+            filter->plen_le += 96;
+        if(filter->plen_ge > 0)
+            filter->plen_ge += 96;
+        if(filter->src_plen_le < 128)
+            filter->src_plen_le += 96;
+        if(filter->src_plen_ge > 0)
+            filter->src_plen_ge += 96;
     }
     *filter_return = filter;
     return c;
@@ -556,6 +562,12 @@ parse_anonymous_ifconf(int c, gnc_t gnc, void *closure,
             if(c < -1)
                 goto error;
             if_conf->faraway = v;
+        } else if(strcmp(token, "unicast") == 0) {
+            int v;
+            c = getbool(c, &v, gnc, closure);
+            if(c < -1)
+                goto error;
+            if_conf->unicast = v;
         } else if(strcmp(token, "link-quality") == 0) {
             int v;
             c = getbool(c, &v, gnc, closure);
@@ -596,6 +608,12 @@ parse_anonymous_ifconf(int c, gnc_t gnc, void *closure,
             if(c < -1)
                 goto error;
             if_conf->enable_timestamps = v;
+        } else if(strcmp(token, "rfc6126-compatible") == 0) {
+            int v;
+            c = getbool(c, &v, gnc, closure);
+            if(c < -1)
+                goto error;
+            if_conf->rfc6126 = v;
         } else if(strcmp(token, "rtt-decay") == 0) {
             int decay;
             c = getint(c, &decay, gnc, closure);
@@ -701,8 +719,10 @@ merge_ifconf(struct interface_conf *dest,
     MERGE(split_horizon);
     MERGE(lq);
     MERGE(faraway);
+    MERGE(unicast);
     MERGE(channel);
     MERGE(enable_timestamps);
+    MERGE(rfc6126);
     MERGE(rtt_decay);
     MERGE(rtt_min);
     MERGE(rtt_max);

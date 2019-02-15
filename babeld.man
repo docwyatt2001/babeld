@@ -34,9 +34,8 @@ Set the name of the file used for preserving long-term information
 between invocations of the
 .B babeld
 daemon.  If this file is deleted, the daemon will run in passive mode
-for 3 minutes when it is next started (see
-.B -P
-below), and other hosts might initially ignore it.  The default is
+for 3 minutes when it is next started, and other hosts might initially
+ignore it. The default is
 .BR /var/lib/babel-state .
 .TP
 .BI \-h " hello-interval"
@@ -410,6 +409,15 @@ compute RTT values.  The default is
 for tunnel interfaces, and
 .B false
 otherwise.
+.TP
+.BR unicast " {" true | false }
+Send multiple copies of TLVs (except Hellos and IHUs) to all neighbours
+rather than sending a single multicast packet.  The default is false.
+.TP
+.BR rfc6126\-compatible " {" true | false }
+Only send TLVs that are defined by RFC 6126, the older version of Babel.
+The default is
+.BR false .
 .TP
 .BI rtt\-decay " decay"
 This specifies the decay factor for the exponential moving average of

@@ -58,7 +58,7 @@ THE SOFTWARE.
 #include "configuration.h"
 
 #ifndef MAX_INTERFACES
-#define MAX_INTERFACES 20
+#define MAX_INTERFACES 1024
 #endif
 
 #define GET_PLEN(p, v4) (v4) ? (p) + 96 : (p)
@@ -95,8 +95,9 @@ struct old_if {
     int rp_filter;
 };
 
-struct old_if old_if[MAX_INTERFACES];
+struct old_if *old_if = NULL;
 int num_old_if = 0;
+int max_old_if = 0;
 
 static int dgram_socket = -1;
 
@@ -390,6 +391,9 @@ netlink_read(struct netlink *nl, struct netlink *nl_ignore, int answer,
                     errno = -err->error;
                     return -1;
                 }
+            } else if(nh->nlmsg_type == RTM_NEWLINK || nh->nlmsg_type == RTM_DELLINK ) {
+                kdebugf("detected an interface change via netlink - triggering babeld interface check\n");
+                check_interfaces();
             } else if(skip) {
                 kdebugf("(skip)");
             } if(filter) {
@@ -443,7 +447,7 @@ netlink_talk(struct nlmsghdr *nh)
     nh->nlmsg_seq = ++nl_command.seqno;
 
     kdebugf("Sending seqno %d from address %p (talk)\n",
-            nl_command.seqno, &nl_command.seqno);
+            nl_command.seqno, (void*)&nl_command.seqno);
 
     rc = sendmsg(nl_command.sock, &msg, 0);
     if(rc < 0 && (errno == EAGAIN || errno == EINTR)) {
@@ -511,7 +515,7 @@ netlink_send_dump(int type, void *data, int len) {
     buf.nh.nlmsg_len = NLMSG_LENGTH(len);
 
     kdebugf("Sending seqno %d from address %p (dump)\n",
-            nl_command.seqno, &nl_command.seqno);
+            nl_command.seqno, (void*)&nl_command.seqno);
 
     rc = sendmsg(nl_command.sock, &msg, 0);
     if(rc < buf.nh.nlmsg_len) {
@@ -646,6 +650,18 @@ get_old_if(const char *ifname)
             return i;
     if(num_old_if >= MAX_INTERFACES)
         return -1;
+    if(num_old_if >= max_old_if) {
+            int n = max_old_if = 0 ? 4 : 2 * max_old_if;
+            struct old_if *new =
+                realloc(old_if, max_old_if * sizeof(struct old_if));
+            if(new != NULL) {
+                old_if = new;
+                max_old_if = n;
+            }
+    }
+    if(num_old_if >= max_old_if)
+        return -1;
+
     old_if[num_old_if].ifname = strdup(ifname);
     if(old_if[num_old_if].ifname == NULL)
         return -1;
@@ -674,14 +690,18 @@ kernel_setup_interface(int setup, const char *ifname, int ifindex)
             fprintf(stderr,
                     "Warning: cannot save old configuration for %s.\n",
                     ifname);
-        rc = write_proc(buf, 0);
-        if(rc < 0)
-            return -1;
+	if(old_if[i].rp_filter) {
+	    rc = write_proc(buf, 0);
+	    if(rc < 0)
+		return -1;
+	}
     } else {
-        if(i >= 0 && old_if[i].rp_filter >= 0)
+        if(i >= 0 && old_if[i].rp_filter > 0)
             rc = write_proc(buf, old_if[i].rp_filter);
-        else
+        else if(i < 0)
             rc = -1;
+        else
+            rc = 1;
 
         if(rc < 0)
             fprintf(stderr,
@@ -1025,12 +1045,13 @@ kernel_route(int operation, int table,
         rtm->rtm_src_len = src_plen;
     rtm->rtm_table = table;
     rtm->rtm_scope = RT_SCOPE_UNIVERSE;
-    if(metric < KERNEL_INFINITY)
+    if(metric < KERNEL_INFINITY) {
         rtm->rtm_type = RTN_UNICAST;
-    else
+        rtm->rtm_flags |= RTNH_F_ONLINK;
+    } else
         rtm->rtm_type = RTN_UNREACHABLE;
+
     rtm->rtm_protocol = RTPROT_BABEL;
-    rtm->rtm_flags |= RTNH_F_ONLINK;
 
     rta = RTM_RTA(rtm);
 
@@ -1586,7 +1607,7 @@ add_rule(int prio, const unsigned char *src_prefix, int src_plen, int table)
 
     message_header->nlmsg_len += current_attribute->rta_len;
     current_attribute = (void*)
-        ((char*)current_attribute) + current_attribute->rta_len;
+        ((char*)current_attribute + current_attribute->rta_len);
 
     /* src */
     current_attribute->rta_len = RTA_LENGTH(addr_size);
@@ -1595,7 +1616,7 @@ add_rule(int prio, const unsigned char *src_prefix, int src_plen, int table)
 
     message_header->nlmsg_len += current_attribute->rta_len;
     current_attribute = (void*)
-        ((char*)current_attribute) + current_attribute->rta_len;
+        ((char*)current_attribute + current_attribute->rta_len);
 
     /* send message */
     if(message_header->nlmsg_len > 64) {
@@ -1648,7 +1669,7 @@ flush_rule(int prio, int family)
 
     message_header->nlmsg_len += current_attribute->rta_len;
     current_attribute = (void*)
-        ((char*)current_attribute) + current_attribute->rta_len;
+        ((char*)current_attribute + current_attribute->rta_len);
 
     /* send message */
     if(message_header->nlmsg_len > 64) {
